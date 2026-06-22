@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use macroquad::{
     color::{DARKPURPLE, YELLOW},
     input::{KeyCode, get_keys_down, get_last_key_pressed, is_key_down},
@@ -12,7 +14,7 @@ const GRID_SIZE: IVec2 = ivec2(20, 20);
 const STEP_TIME: f32 = 0.1;
 
 struct Snake {
-    pos: IVec2,
+    body: VecDeque<IVec2>,
     dir: IVec2,
 }
 
@@ -23,7 +25,11 @@ fn cell_to_pixel(cell: IVec2, cell_size: Vec2) -> Vec2 {
 #[main("Helix Snake")]
 async fn main() {
     let mut snake = Snake {
-        pos: GRID_SIZE / 2,
+        body: VecDeque::from(vec![
+            ivec2(2, GRID_SIZE.y / 2),
+            ivec2(1, GRID_SIZE.y / 2),
+            ivec2(0, GRID_SIZE.y / 2),
+        ]),
         dir: ivec2(1, 0),
     };
     let mut timer = 0.0;
@@ -38,9 +44,10 @@ async fn main() {
         timer += dt;
 
         if timer >= STEP_TIME {
-            timer = 0.0;
-            snake.pos += snake.dir;
-            snake.pos = snake.pos.rem_euclid(GRID_SIZE);
+            timer -= STEP_TIME;
+            snake.body.pop_back();
+            let new_head = *snake.body.front().unwrap() + snake.dir;
+            snake.body.push_front(new_head.rem_euclid(GRID_SIZE));
         }
 
         let new_dir = match get_last_key_pressed() {
@@ -59,8 +66,10 @@ async fn main() {
         }
 
         clear_background(DARKPURPLE);
-        let pixel = cell_to_pixel(snake.pos, cell_size);
-        draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, YELLOW);
+        for part in &snake.body {
+            let pixel = cell_to_pixel(*part, cell_size);
+            draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, YELLOW);
+        }
         next_frame().await
     }
 }
