@@ -40,6 +40,7 @@ async fn main() {
         if timer >= STEP_TIME {
             timer = 0.0;
             snake.pos += snake.dir;
+            snake.pos = snake.pos.rem_euclid(GRID_SIZE);
         }
 
         let new_dir = match get_last_key_pressed() {
