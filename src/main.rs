@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use macroquad::{
-    color::{BLUE, DARKPURPLE, YELLOW},
+    color::{BLUE, DARKPURPLE, GOLD, YELLOW},
     input::{KeyCode, get_keys_down, get_last_key_pressed, is_key_down},
     main,
     math::{IVec2, Vec2, ivec2, vec2},
@@ -81,6 +81,10 @@ async fn main() {
             } else {
                 snake.body.pop_back();
             }
+
+            if snake.body.iter().skip(1).any(|&c| c == new_head) {
+                panic!("Game over!");
+            }
         }
 
         if is_key_down(KeyCode::Q) {
@@ -88,9 +92,10 @@ async fn main() {
         }
 
         clear_background(DARKPURPLE);
-        for part in &snake.body {
+        for (i, part) in snake.body.iter().enumerate() {
+            let color = if i == 0 { GOLD } else { YELLOW };
             let pixel = cell_to_pixel(*part, cell_size);
-            draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, YELLOW);
+            draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, color);
         }
 
         let pixel = cell_to_pixel(food, cell_size);
