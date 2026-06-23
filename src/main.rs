@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use macroquad::{
-    color::{BLUE, DARKPURPLE, GOLD, WHITE, YELLOW},
-    input::{KeyCode, get_keys_down, get_last_key_pressed, is_key_down, is_key_pressed},
+    color::{BLACK, BLUE, DARKPURPLE, GOLD, WHITE, YELLOW},
+    input::{KeyCode, get_last_key_pressed, is_key_down, is_key_pressed},
     main,
     math::{IVec2, Vec2, ivec2, vec2},
     rand::gen_range,
@@ -57,8 +57,8 @@ struct Snake {
     dir: IVec2,
 }
 
-fn cell_to_pixel(cell: IVec2, cell_size: Vec2) -> Vec2 {
-    cell.as_vec2() * cell_size
+fn cell_to_pixel(cell: IVec2, cell_size: f32, offset: Vec2) -> Vec2 {
+    offset + cell.as_vec2() * cell_size
 }
 
 fn spawn_food(body: &VecDeque<IVec2>) -> Option<IVec2> {
@@ -74,20 +74,21 @@ fn spawn_food(body: &VecDeque<IVec2>) -> Option<IVec2> {
 }
 
 fn view(state: &Game) {
-    let cell_size = vec2(
-        screen_width() / GRID_SIZE.x as f32,
-        screen_height() / GRID_SIZE.y as f32,
-    );
+    let screen = vec2(screen_width(), screen_height());
+    let cell_size = (screen / GRID_SIZE.as_vec2()).min_element();
+    let board = GRID_SIZE.as_vec2() * cell_size;
+    let offset = (screen - board) / 2.0;
 
-    clear_background(DARKPURPLE);
+    clear_background(BLACK);
+    draw_rectangle(offset.x, offset.y, board.x, board.y, DARKPURPLE);
     for (i, part) in state.snake.body.iter().enumerate().rev() {
         let color = if i == 0 { GOLD } else { YELLOW };
-        let pixel = cell_to_pixel(*part, cell_size);
-        draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, color);
+        let pixel = cell_to_pixel(*part, cell_size, offset);
+        draw_rectangle(pixel.x, pixel.y, cell_size, cell_size, color);
     }
 
-    let pixel = cell_to_pixel(state.food, cell_size);
-    draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, BLUE);
+    let pixel = cell_to_pixel(state.food, cell_size, offset);
+    draw_rectangle(pixel.x, pixel.y, cell_size, cell_size, BLUE);
 
     match state.phase {
         Phase::Start => {
