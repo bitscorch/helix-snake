@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use macroquad::{
     color::{BLACK, BLUE, DARKPURPLE, GOLD, WHITE, YELLOW},
-    input::{KeyCode, get_last_key_pressed, is_key_down, is_key_pressed},
+    input::{KeyCode, get_last_key_pressed},
     main,
     math::{IVec2, Vec2, ivec2, vec2},
     rand::gen_range,
@@ -19,7 +19,6 @@ struct Game {
     snake: Snake,
     food: IVec2,
     next_dir: IVec2,
-    timer: f32,
     phase: Phase,
 }
 
@@ -39,7 +38,6 @@ impl Game {
             snake,
             food,
             next_dir: ivec2(1, 0),
-            timer: 0.0,
             phase: Phase::Start,
         }
     }
@@ -50,6 +48,7 @@ enum Phase {
     Lost,
     Won,
     Start,
+    Quit,
 }
 
 struct Snake {
@@ -118,66 +117,103 @@ fn view(state: &Game) {
                 WHITE,
             );
         }
-        Phase::Playing => {}
+        Phase::Playing | Phase::Quit => {}
     };
+}
+
+enum Msg {
+    Start,
+    Turn(IVec2),
+    Tick,
+    Restart,
+    Quit,
+}
+
+fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
+    let key = get_last_key_pressed();
+
+    if key == Some(KeyCode::Q) {
+        msgs.push(Msg::Quit);
+    }
+
+    match phase {
+        Phase::Start => {
+            *timer = 0.0;
+            if key.is_some() {
+                msgs.push(Msg::Start)
+            }
+        }
+        Phase::Playing => {
+            match key {
+                Some(KeyCode::L) => msgs.push(Msg::Turn(ivec2(1, 0))),
+                Some(KeyCode::H) => msgs.push(Msg::Turn(ivec2(-1, 0))),
+                Some(KeyCode::J) => msgs.push(Msg::Turn(ivec2(0, 1))),
+                Some(KeyCode::K) => msgs.push(Msg::Turn(ivec2(0, -1))),
+                _ => {}
+            }
+
+            *timer += get_frame_time();
+            if *timer >= STEP_TIME {
+                *timer -= STEP_TIME;
+                msgs.push(Msg::Tick);
+            }
+        }
+        Phase::Lost | Phase::Won => {
+            *timer = 0.0;
+            if key == Some(KeyCode::R) {
+                msgs.push(Msg::Restart);
+            }
+        }
+        Phase::Quit => {}
+    }
+}
+
+fn update(mut state: Game, msg: Msg) -> Game {
+    match msg {
+        Msg::Start => state.phase = Phase::Playing,
+        Msg::Turn(dir) => {
+            if dir != -state.snake.dir {
+                state.next_dir = dir
+            }
+        }
+        Msg::Tick => {
+            state.snake.dir = state.next_dir;
+            let new_head =
+                (*state.snake.body.front().unwrap() + state.snake.dir).rem_euclid(GRID_SIZE);
+            state.snake.body.push_front(new_head);
+            if new_head == state.food {
+                match spawn_food(&state.snake.body) {
+                    Some(f) => state.food = f,
+                    None => state.phase = Phase::Won,
+                }
+            } else {
+                state.snake.body.pop_back();
+            }
+            if state.snake.body.iter().skip(1).any(|&c| c == new_head) {
+                state.phase = Phase::Lost;
+            }
+        }
+        Msg::Restart => state = Game::new(),
+        Msg::Quit => state.phase = Phase::Quit,
+    }
+    state
 }
 
 #[main("Helix Snake")]
 async fn main() {
+    let mut msgs: Vec<Msg> = Vec::with_capacity(10);
+    let mut timer = 0.0;
     let mut state = Game::new();
 
     loop {
-        let dt = get_frame_time();
+        msgs.clear();
+        input(&mut msgs, &mut timer, &state.phase);
 
-        match state.phase {
-            Phase::Start => {
-                if get_last_key_pressed().is_some() {
-                    state.phase = Phase::Playing;
-                }
-            }
-            Phase::Playing => {
-                state.timer += dt;
-
-                let proposed_dir = match get_last_key_pressed() {
-                    Some(KeyCode::L) => ivec2(1, 0),
-                    Some(KeyCode::H) => ivec2(-1, 0),
-                    Some(KeyCode::J) => ivec2(0, 1),
-                    Some(KeyCode::K) => ivec2(0, -1),
-                    _ => state.next_dir,
-                };
-
-                if proposed_dir != -state.snake.dir {
-                    state.next_dir = proposed_dir;
-                }
-
-                if state.timer >= STEP_TIME {
-                    state.timer -= STEP_TIME;
-                    state.snake.dir = state.next_dir;
-                    let new_head = (*state.snake.body.front().unwrap() + state.snake.dir)
-                        .rem_euclid(GRID_SIZE);
-                    state.snake.body.push_front(new_head);
-                    if new_head == state.food {
-                        match spawn_food(&state.snake.body) {
-                            Some(f) => state.food = f,
-                            None => state.phase = Phase::Won,
-                        }
-                    } else {
-                        state.snake.body.pop_back();
-                    }
-
-                    if state.snake.body.iter().skip(1).any(|&c| c == new_head) {
-                        state.phase = Phase::Lost;
-                    }
-                }
-            }
-            Phase::Lost | Phase::Won => {
-                if is_key_pressed(KeyCode::R) {
-                    state = Game::new();
-                }
-            }
+        for msg in msgs.drain(..) {
+            state = update(state, msg);
         }
 
-        if is_key_down(KeyCode::Q) {
+        if matches!(state.phase, Phase::Quit) {
             break;
         }
 
