@@ -73,16 +73,60 @@ fn spawn_food(body: &VecDeque<IVec2>) -> Option<IVec2> {
     }
 }
 
+fn view(state: &Game) {
+    let cell_size = vec2(
+        screen_width() / GRID_SIZE.x as f32,
+        screen_height() / GRID_SIZE.y as f32,
+    );
+
+    clear_background(DARKPURPLE);
+    for (i, part) in state.snake.body.iter().enumerate().rev() {
+        let color = if i == 0 { GOLD } else { YELLOW };
+        let pixel = cell_to_pixel(*part, cell_size);
+        draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, color);
+    }
+
+    let pixel = cell_to_pixel(state.food, cell_size);
+    draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, BLUE);
+
+    match state.phase {
+        Phase::Start => {
+            draw_text(
+                "Press any key to start",
+                screen_width() / 2.0,
+                screen_height() / 2.0,
+                40.0,
+                WHITE,
+            );
+        }
+        Phase::Lost => {
+            draw_text(
+                "Game Over - R to restart",
+                screen_width() / 2.0,
+                screen_height() / 2.0,
+                40.0,
+                WHITE,
+            );
+        }
+        Phase::Won => {
+            draw_text(
+                "You Win! - R to restart",
+                screen_width() / 2.0,
+                screen_height() / 2.0,
+                40.0,
+                WHITE,
+            );
+        }
+        Phase::Playing => {}
+    };
+}
+
 #[main("Helix Snake")]
 async fn main() {
     let mut state = Game::new();
 
     loop {
         let dt = get_frame_time();
-        let cell_size = vec2(
-            screen_width() / GRID_SIZE.x as f32,
-            screen_height() / GRID_SIZE.y as f32,
-        );
 
         match state.phase {
             Phase::Start => {
@@ -136,46 +180,7 @@ async fn main() {
             break;
         }
 
-        clear_background(DARKPURPLE);
-        for (i, part) in state.snake.body.iter().rev().enumerate() {
-            let color = if i == 0 { GOLD } else { YELLOW };
-            let pixel = cell_to_pixel(*part, cell_size);
-            draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, color);
-        }
-
-        let pixel = cell_to_pixel(state.food, cell_size);
-        draw_rectangle(pixel.x, pixel.y, cell_size.x, cell_size.y, BLUE);
-
-        match state.phase {
-            Phase::Start => {
-                draw_text(
-                    "Press any key to start",
-                    screen_width() / 2.0,
-                    screen_height() / 2.0,
-                    40.0,
-                    WHITE,
-                );
-            }
-            Phase::Lost => {
-                draw_text(
-                    "Game Over - R to restart",
-                    screen_width() / 2.0,
-                    screen_height() / 2.0,
-                    40.0,
-                    WHITE,
-                );
-            }
-            Phase::Won => {
-                draw_text(
-                    "You Win! - R to restart",
-                    screen_width() / 2.0,
-                    screen_height() / 2.0,
-                    40.0,
-                    WHITE,
-                );
-            }
-            Phase::Playing => {}
-        };
+        view(&state);
         next_frame().await
     }
 }
