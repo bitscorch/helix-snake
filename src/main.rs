@@ -191,6 +191,7 @@ fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
 
     if key == Some(KeyCode::Q) {
         msgs.push(Msg::Quit);
+        return;
     }
 
     match phase {
