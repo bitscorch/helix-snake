@@ -17,7 +17,7 @@ const GRID_SIZE: IVec2 = ivec2(30, 30);
 const STEP_TIME: f32 = 0.1;
 const FOOD_COUNT: usize = 5;
 
-#[derive(Clone, Copy, EnumIter, EnumCount)]
+#[derive(Clone, Copy, PartialEq, EnumIter, EnumCount)]
 enum FoodColor {
     Red,
     Blue,
@@ -182,6 +182,7 @@ enum Msg {
     Start,
     Turn(IVec2),
     Tick,
+    SelectSame,
     Restart,
     Quit,
 }
@@ -207,6 +208,7 @@ fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
                 Some(KeyCode::H) => msgs.push(Msg::Turn(ivec2(-1, 0))),
                 Some(KeyCode::J) => msgs.push(Msg::Turn(ivec2(0, 1))),
                 Some(KeyCode::K) => msgs.push(Msg::Turn(ivec2(0, -1))),
+                Some(KeyCode::S) => msgs.push(Msg::SelectSame),
                 _ => {}
             }
 
@@ -263,6 +265,39 @@ fn update(mut state: Game, msg: Msg) -> Game {
 
             if state.snake.body.iter().skip(1).any(|&c| c == new_head) {
                 state.phase = Phase::Lost;
+            }
+        }
+        Msg::SelectSame => {
+            let matches: Vec<usize> = state
+                .food
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| Some(f.color) == state.snake.color)
+                .map(|(i, _)| i)
+                .collect();
+
+            if matches.is_empty() {
+                state.phase = Phase::Lost;
+            } else {
+                state.snake.grow += matches.len();
+
+                let mut occupied: Vec<IVec2> = state.snake.body.iter().copied().collect();
+                for (j, f) in state.food.iter().enumerate() {
+                    if !matches.contains(&j) {
+                        occupied.push(f.pos);
+                    }
+                }
+                for i in matches {
+                    match spawn_food(&occupied) {
+                        Some(f) => {
+                            occupied.push(f.pos);
+                            state.food[i] = f;
+                        }
+                        None => state.phase = Phase::Won,
+                    }
+                }
+
+                state.snake.color = None;
             }
         }
         Msg::Restart => state = Game::new(),
