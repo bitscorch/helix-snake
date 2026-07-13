@@ -4,5 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-macroquad = "0.4.15"
+macroquad = { version = "0.4.15", features = ["glam-serde"] }
+ron = "0.12.2"
+serde = { version = "1.0.228", features = ["derive"] }
 strum = { version = "0.28.0", features = ["derive"] }
+
+[dev-dependencies]
+proptest = "1.11.0"

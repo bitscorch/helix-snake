@@ -81,7 +81,7 @@ impl Game {
 
 #[cfg(debug_assertions)]
 fn check_invariants(g: &Game) {
-    // dir is a canonical unit step  ← would have caught wrapped_delta instantly
+    // dir is a unit step
     assert_eq!(
         g.snake.dir.abs().element_sum(),
         1,
@@ -449,7 +449,7 @@ mod tests {
 
             for m in msgs {
                 if !matches!(g.phase, Phase::Playing) {
-                    break;   // input only emits Tick/Turn while Playing — mimic that
+                    break;
                 }
                 g = update(g, m);
                 check_invariants(&g);
@@ -472,11 +472,11 @@ mod tests {
 
             let replay: Replay = ron::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
-            srand(replay.seed); // same order as the shell!
+            srand(replay.seed);
             let mut g = Game::new();
             for m in replay.msgs.into_iter() {
                 g = update(g, m);
-                check_invariants(&g); // panics at the first bad message; `i` tells you where
+                check_invariants(&g);
             }
         }
     }
