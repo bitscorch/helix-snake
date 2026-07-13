@@ -1,16 +1,17 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use macroquad::{
-    color::{BLACK, BLUE, Color, DARKPURPLE, GOLD, GREEN, RED, WHITE, YELLOW},
+    color::{BLACK, BLUE, Color, DARKPURPLE, GREEN, RED, WHITE, YELLOW},
     input::{KeyCode, get_last_key_pressed},
     main,
     math::{IVec2, Vec2, ivec2, vec2},
-    rand::gen_range,
+    rand::{gen_range, srand},
     shapes::draw_rectangle,
     text::draw_text,
     time::get_frame_time,
     window::{clear_background, next_frame, screen_height, screen_width},
 };
+use serde::{Deserialize, Serialize};
 use strum::{EnumCount, EnumIter, IntoEnumIterator};
 
 const GRID_SIZE: IVec2 = ivec2(30, 30);
@@ -78,6 +79,60 @@ impl Game {
     }
 }
 
+#[cfg(debug_assertions)]
+fn check_invariants(g: &Game) {
+    // dir is a canonical unit step  ← would have caught wrapped_delta instantly
+    assert_eq!(
+        g.snake.dir.abs().element_sum(),
+        1,
+        "dir not a unit step: {:?}",
+        g.snake.dir
+    );
+    assert_eq!(g.next_dir.abs().element_sum(), 1);
+    assert_ne!(g.next_dir, -g.snake.dir, "buffered a U-turn");
+
+    // every cell on the board
+    for c in &g.snake.body {
+        assert!(c.x >= 0 && c.x < GRID_SIZE.x && c.y >= 0 && c.y < GRID_SIZE.y);
+    }
+    // body is a contiguous path (each pair one wrapped step apart)
+    for (a, b) in g.snake.body.iter().zip(g.snake.body.iter().skip(1)) {
+        assert_eq!(
+            wrapped_delta(*b, *a).abs().element_sum(),
+            1,
+            "body not contiguous"
+        );
+    }
+    // while alive, no self-overlap
+    if matches!(g.phase, Phase::Playing) {
+        let set: HashSet<_> = g.snake.body.iter().collect();
+        assert_eq!(set.len(), g.snake.body.len(), "body overlaps itself");
+    }
+    // food never on the snake, never on each other
+    for (i, f) in g.food.iter().enumerate() {
+        assert!(!g.snake.body.contains(&f.pos), "food on snake");
+        assert!(
+            g.food.iter().skip(i + 1).all(|o| o.pos != f.pos),
+            "food on food"
+        );
+    }
+}
+
+#[cfg(debug_assertions)]
+fn maybe_dump_replay(seed: u64, history: &[Msg]) {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(target_arch = "wasm32"))]
+    if macroquad::input::is_key_pressed(KeyCode::F1) {
+        let replay = Replay {
+            seed,
+            msgs: history.to_vec(),
+        };
+        let text = ron::ser::to_string_pretty(&replay, Default::default()).unwrap();
+        std::fs::write("replay.ron", text).unwrap();
+        println!("saved replay.ron ({} msgs)", history.len());
+    }
+}
+
 enum Phase {
     Playing,
     Lost,
@@ -118,6 +173,11 @@ fn spawn_food(occupied: &[IVec2]) -> Option<Food> {
         let color = FoodColor::random();
         Some(Food { pos, color })
     }
+}
+
+fn wrapped_delta(from: IVec2, to: IVec2) -> IVec2 {
+    let half = GRID_SIZE / 2;
+    (to - from + half).rem_euclid(GRID_SIZE) - half
 }
 
 fn view(state: &Game) {
@@ -178,13 +238,21 @@ fn view(state: &Game) {
     };
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 enum Msg {
     Start,
     Turn(IVec2),
     Tick,
     SelectSame,
+    Reverse,
     Restart,
     Quit,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Replay {
+    seed: u64,
+    msgs: Vec<Msg>,
 }
 
 fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
@@ -209,6 +277,7 @@ fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
                 Some(KeyCode::J) => msgs.push(Msg::Turn(ivec2(0, 1))),
                 Some(KeyCode::K) => msgs.push(Msg::Turn(ivec2(0, -1))),
                 Some(KeyCode::S) => msgs.push(Msg::SelectSame),
+                Some(KeyCode::B) => msgs.push(Msg::Reverse),
                 _ => {}
             }
 
@@ -300,6 +369,16 @@ fn update(mut state: Game, msg: Msg) -> Game {
                 state.snake.color = None;
             }
         }
+        Msg::Reverse => {
+            state.snake.body.make_contiguous().reverse();
+
+            let head = state.snake.body[0];
+            let neck = state.snake.body[1];
+            let dir = wrapped_delta(neck, head);
+
+            state.snake.dir = dir;
+            state.next_dir = dir;
+        }
         Msg::Restart => state = Game::new(),
         Msg::Quit => state.phase = Phase::Quit,
     }
@@ -308,6 +387,10 @@ fn update(mut state: Game, msg: Msg) -> Game {
 
 #[main("Helix Snake")]
 async fn main() {
+    let seed = macroquad::miniquad::date::now() as u64;
+    srand(seed);
+    let mut history: Vec<Msg> = Vec::new();
+
     let mut msgs: Vec<Msg> = Vec::with_capacity(10);
     let mut timer = 0.0;
     let mut state = Game::new();
@@ -317,8 +400,16 @@ async fn main() {
         input(&mut msgs, &mut timer, &state.phase);
 
         for msg in msgs.drain(..) {
+            #[cfg(debug_assertions)]
+            history.push(msg);
+
             state = update(state, msg);
+
+            #[cfg(debug_assertions)]
+            check_invariants(&state);
         }
+
+        maybe_dump_replay(seed, &history);
 
         if matches!(state.phase, Phase::Quit) {
             break;
@@ -326,5 +417,67 @@ async fn main() {
 
         view(&state);
         next_frame().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use macroquad::rand::srand;
+    use proptest::prelude::*;
+
+    fn any_msg() -> impl Strategy<Value = Msg> {
+        prop_oneof![
+            8 => Just(Msg::Tick),
+            1 => Just(Msg::SelectSame),
+            2 => Just(Msg::Reverse),
+            4 => Just(Msg::Turn(ivec2(1, 0))),
+            4 => Just(Msg::Turn(ivec2(-1, 0))),
+            4 => Just(Msg::Turn(ivec2(0, 1))),
+            4 => Just(Msg::Turn(ivec2(0, -1))),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn invariants_hold_under_any_input(
+            seed: u64,
+            msgs in prop::collection::vec(any_msg(), 0..500),
+        ) {
+            srand(seed);
+            let mut g = update(Game::new(), Msg::Start);
+
+            for m in msgs {
+                if !matches!(g.phase, Phase::Playing) {
+                    break;   // input only emits Tick/Turn while Playing — mimic that
+                }
+                g = update(g, m);
+                check_invariants(&g);
+            }
+        }
+    }
+
+    #[test]
+    fn replay_regressions() {
+        let dir = std::path::Path::new("tests/replays");
+        if !dir.exists() {
+            return;
+        }
+
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "ron") {
+                continue;
+            }
+
+            let replay: Replay = ron::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+            srand(replay.seed); // same order as the shell!
+            let mut g = Game::new();
+            for m in replay.msgs.into_iter() {
+                g = update(g, m);
+                check_invariants(&g); // panics at the first bad message; `i` tells you where
+            }
+        }
     }
 }
