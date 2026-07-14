@@ -119,13 +119,13 @@ fn check_invariants(g: &Game) {
 }
 
 #[cfg(debug_assertions)]
-fn maybe_dump_replay(seed: u64, history: &[Msg]) {
+fn maybe_dump_replay(seed: u64, history: &[Frame]) {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(not(target_arch = "wasm32"))]
     if macroquad::input::is_key_pressed(KeyCode::F1) {
         let replay = Replay {
             seed,
-            msgs: history.to_vec(),
+            frames: history.to_vec(),
         };
         let text = ron::ser::to_string_pretty(&replay, Default::default()).unwrap();
         std::fs::write("replay.ron", text).unwrap();
@@ -184,6 +184,18 @@ fn wrapped_delta(from: IVec2, to: IVec2) -> IVec2 {
 enum Key {
     Char(char),
     Esc,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+struct Frame {
+    key: Option<Key>,
+    dt: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Replay {
+    seed: u64,
+    frames: Vec<Frame>,
 }
 
 fn poll() -> (Option<Key>, f32) {
@@ -254,7 +266,7 @@ fn view(state: &Game) {
     };
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
 enum Msg {
     Start,
     Turn(IVec2),
@@ -263,12 +275,6 @@ enum Msg {
     Reverse,
     Restart,
     Quit,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Replay {
-    seed: u64,
-    msgs: Vec<Msg>,
 }
 
 fn input(state: &Game, msgs: &mut Vec<Msg>, timer: &mut f32, key: Option<Key>, dt: f32) {
@@ -403,7 +409,7 @@ fn update(mut state: Game, msg: Msg) -> Game {
 async fn main() {
     let seed = macroquad::miniquad::date::now() as u64;
     srand(seed);
-    let mut history: Vec<Msg> = Vec::new();
+    let mut history: Vec<Frame> = Vec::new();
 
     let mut msgs: Vec<Msg> = Vec::with_capacity(10);
     let mut timer = 0.0;
@@ -411,19 +417,21 @@ async fn main() {
 
     loop {
         let (key, dt) = poll();
+
+        #[cfg(debug_assertions)]
+        history.push(Frame { key, dt });
+
         msgs.clear();
         input(&state, &mut msgs, &mut timer, key, dt);
 
         for msg in msgs.drain(..) {
-            #[cfg(debug_assertions)]
-            history.push(msg);
-
             state = update(state, msg);
 
             #[cfg(debug_assertions)]
             check_invariants(&state);
         }
 
+        #[cfg(debug_assertions)]
         maybe_dump_replay(seed, &history);
 
         if matches!(state.phase, Phase::Quit) {
@@ -441,15 +449,28 @@ mod tests {
     use macroquad::rand::srand;
     use proptest::prelude::*;
 
-    fn any_msg() -> impl Strategy<Value = Msg> {
+    fn any_key() -> impl Strategy<Value = Option<Key>> {
         prop_oneof![
-            8 => Just(Msg::Tick),
-            1 => Just(Msg::SelectSame),
-            2 => Just(Msg::Reverse),
-            4 => Just(Msg::Turn(ivec2(1, 0))),
-            4 => Just(Msg::Turn(ivec2(-1, 0))),
-            4 => Just(Msg::Turn(ivec2(0, 1))),
-            4 => Just(Msg::Turn(ivec2(0, -1))),
+            6 => Just(None),                    // most frames: no keypress
+            1 => Just(Some(Key::Char('h'))),
+            1 => Just(Some(Key::Char('j'))),
+            1 => Just(Some(Key::Char('k'))),
+            1 => Just(Some(Key::Char('l'))),
+            1 => Just(Some(Key::Char('s'))),
+            1 => Just(Some(Key::Char('b'))),
+            1 => Just(Some(Key::Char('i'))),
+            1 => Just(Some(Key::Esc)),
+            1 => Just(Some(Key::Char('r'))),
+            1 => Just(Some(Key::Char('x'))),    // unbound — must be a no-op
+            // deliberately no 'q': it'd end the run immediately
+        ]
+    }
+
+    fn any_dt() -> impl Strategy<Value = f32> {
+        prop_oneof![
+            8 => Just(0.016),        // normal 60fps
+            1 => 0.0f32..0.005,      // fast frames
+            1 => 0.05f32..0.5,       // lag spikes → bursts of Ticks
         ]
     }
 
@@ -457,17 +478,20 @@ mod tests {
         #[test]
         fn invariants_hold_under_any_input(
             seed: u64,
-            msgs in prop::collection::vec(any_msg(), 0..500),
+            frames in prop::collection::vec((any_key(), any_dt()), 0..800),
         ) {
             srand(seed);
-            let mut g = update(Game::new(), Msg::Start);
+            let mut g = Game::new();
+            let mut msgs = Vec::new();
+            let mut timer = 0.0;
 
-            for m in msgs {
-                if !matches!(g.phase, Phase::Playing) {
-                    break;
+            for (key, dt) in frames {
+                msgs.clear();
+                input(&g, &mut msgs, &mut timer, key, dt);
+                for m in msgs.drain(..) {
+                    g = update(g, m);
+                    check_invariants(&g);
                 }
-                g = update(g, m);
-                check_invariants(&g);
             }
         }
     }
@@ -485,13 +509,21 @@ mod tests {
                 continue;
             }
 
-            let replay: Replay = ron::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let text = std::fs::read_to_string(&path).unwrap();
+            let replay: Replay = ron::from_str(&text).unwrap();
 
             srand(replay.seed);
             let mut g = Game::new();
-            for m in replay.msgs.into_iter() {
-                g = update(g, m);
-                check_invariants(&g);
+            let mut msgs = Vec::new();
+            let mut timer = 0.0;
+
+            for f in replay.frames {
+                msgs.clear();
+                input(&g, &mut msgs, &mut timer, f.key, f.dt);
+                for m in msgs.drain(..) {
+                    g = update(g, m);
+                    check_invariants(&g);
+                }
             }
         }
     }
