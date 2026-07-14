@@ -6,7 +6,7 @@ use macroquad::{
     main,
     math::{IVec2, Vec2, ivec2, vec2},
     rand::{gen_range, srand},
-    shapes::draw_rectangle,
+    shapes::{draw_rectangle, draw_rectangle_lines},
     text::draw_text,
     time::get_frame_time,
     window::{clear_background, next_frame, screen_height, screen_width},
@@ -44,11 +44,25 @@ struct Food {
     color: FoodColor,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Mode {
+    Nor,
+    Ins,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Selection {
+    All,
+    None,
+}
+
 struct Game {
     snake: Snake,
     food: [Food; FOOD_COUNT],
     next_dir: IVec2,
     phase: Phase,
+    mode: Mode,
+    selection: Selection,
 }
 
 impl Game {
@@ -75,6 +89,8 @@ impl Game {
             food,
             next_dir: ivec2(1, 0),
             phase: Phase::Start,
+            mode: Mode::Nor,
+            selection: Selection::None,
         }
     }
 }
@@ -108,9 +124,12 @@ fn check_invariants(g: &Game) {
         let set: HashSet<_> = g.snake.body.iter().collect();
         assert_eq!(set.len(), g.snake.body.len(), "body overlaps itself");
     }
-    // food never on the snake, never on each other
+    // food on board and not on other food
     for (i, f) in g.food.iter().enumerate() {
-        assert!(!g.snake.body.contains(&f.pos), "food on snake");
+        assert!(
+            f.pos.x >= 0 && f.pos.x < GRID_SIZE.x && f.pos.y >= 0 && f.pos.y < GRID_SIZE.y,
+            "food off board"
+        );
         assert!(
             g.food.iter().skip(i + 1).all(|o| o.pos != f.pos),
             "food on food"
@@ -210,15 +229,21 @@ fn poll() -> (Option<Key>, f32) {
 
 fn view(state: &Game) {
     let screen = vec2(screen_width(), screen_height());
-    let cell_size = (screen / GRID_SIZE.as_vec2()).min_element();
+    let cell_size = (screen / GRID_SIZE.as_vec2()).min_element().floor();
     let board = GRID_SIZE.as_vec2() * cell_size;
-    let offset = (screen - board) / 2.0;
+    let offset = ((screen - board) / 2.0).floor();
 
     clear_background(BLACK);
-    draw_rectangle(offset.x, offset.y, board.x, board.y, DARKPURPLE);
-    let color = state.snake.color.map_or(YELLOW, |c| c.to_color());
+    let background_color = if matches!(state.selection, Selection::All) {
+        scale(DARKPURPLE, 1.3)
+    } else {
+        DARKPURPLE
+    };
+    draw_rectangle(offset.x, offset.y, board.x, board.y, background_color);
+
+    let snake_color = state.snake.color.map_or(YELLOW, |c| c.to_color());
     for (i, part) in state.snake.body.iter().enumerate().rev() {
-        let color = scale(color, if i == 0 { 1.075 } else { 0.925 });
+        let color = scale(snake_color, if i == 0 { 1.075 } else { 0.925 });
         let pixel = cell_to_pixel(*part, cell_size, offset);
         draw_rectangle(pixel.x, pixel.y, cell_size, cell_size, color);
     }
@@ -232,7 +257,24 @@ fn view(state: &Game) {
             cell_size,
             food.color.to_color(),
         );
+
+        let t = (cell_size * 0.12).floor().max(2.0);
+        if matches!(state.selection, Selection::All) && state.snake.color == Some(food.color) {
+            draw_rectangle_lines(pixel.x, pixel.y, cell_size, cell_size, t * 2.0, WHITE);
+        }
     }
+
+    let mode_text = match state.mode {
+        Mode::Nor => "NOR",
+        Mode::Ins => "INS",
+    };
+    draw_text(
+        mode_text,
+        offset.x + cell_size,
+        offset.y + board.y - cell_size,
+        cell_size,
+        WHITE,
+    );
 
     match state.phase {
         Phase::Start => {
@@ -240,7 +282,7 @@ fn view(state: &Game) {
                 "Press any key to start",
                 screen_width() / 2.0,
                 screen_height() / 2.0,
-                40.0,
+                cell_size,
                 WHITE,
             );
         }
@@ -249,7 +291,7 @@ fn view(state: &Game) {
                 "Game Over - R to restart",
                 screen_width() / 2.0,
                 screen_height() / 2.0,
-                40.0,
+                cell_size,
                 WHITE,
             );
         }
@@ -258,7 +300,7 @@ fn view(state: &Game) {
                 "You Win! - R to restart",
                 screen_width() / 2.0,
                 screen_height() / 2.0,
-                40.0,
+                cell_size,
                 WHITE,
             );
         }
@@ -271,7 +313,9 @@ enum Msg {
     Start,
     Turn(IVec2),
     Tick,
-    SelectSame,
+    Enter(Mode),
+    Choose(Selection),
+    EatSelection,
     Reverse,
     Restart,
     Quit,
@@ -291,14 +335,34 @@ fn input(state: &Game, msgs: &mut Vec<Msg>, timer: &mut f32, key: Option<Key>, d
             }
         }
         Phase::Playing => {
-            match key {
-                Some(Key::Char('l')) => msgs.push(Msg::Turn(ivec2(1, 0))),
-                Some(Key::Char('h')) => msgs.push(Msg::Turn(ivec2(-1, 0))),
-                Some(Key::Char('j')) => msgs.push(Msg::Turn(ivec2(0, 1))),
-                Some(Key::Char('k')) => msgs.push(Msg::Turn(ivec2(0, -1))),
-                Some(Key::Char('s')) => msgs.push(Msg::SelectSame),
-                Some(Key::Char('b')) => msgs.push(Msg::Reverse),
-                _ => {}
+            match state.selection {
+                Selection::All => match key {
+                    Some(Key::Char('s')) => {
+                        msgs.push(Msg::EatSelection);
+                        msgs.push(Msg::Choose(Selection::None));
+                    }
+                    Some(_) => msgs.push(Msg::Choose(Selection::None)),
+                    _ => {}
+                },
+                Selection::None => {}
+            }
+
+            match state.mode {
+                Mode::Nor => match key {
+                    Some(Key::Char('l')) => msgs.push(Msg::Turn(ivec2(1, 0))),
+                    Some(Key::Char('h')) => msgs.push(Msg::Turn(ivec2(-1, 0))),
+                    Some(Key::Char('j')) => msgs.push(Msg::Turn(ivec2(0, 1))),
+                    Some(Key::Char('k')) => msgs.push(Msg::Turn(ivec2(0, -1))),
+                    Some(Key::Char('b')) => msgs.push(Msg::Reverse),
+                    Some(Key::Char('i')) => msgs.push(Msg::Enter(Mode::Ins)),
+                    Some(Key::Char('%')) => msgs.push(Msg::Choose(Selection::All)),
+                    _ => {}
+                },
+                Mode::Ins => {
+                    if let Some(Key::Esc) = key {
+                        msgs.push(Msg::Enter(Mode::Nor))
+                    }
+                }
             }
 
             *timer += dt;
@@ -330,7 +394,10 @@ fn update(mut state: Game, msg: Msg) -> Game {
             let new_head =
                 (*state.snake.body.front().unwrap() + state.snake.dir).rem_euclid(GRID_SIZE);
             state.snake.body.push_front(new_head);
-            if let Some(i) = state.food.iter().position(|f| f.pos == new_head) {
+
+            if matches!(state.mode, Mode::Ins)
+                && let Some(i) = state.food.iter().position(|f| f.pos == new_head)
+            {
                 state.snake.color = Some(state.food[i].color);
                 state.snake.grow += 1;
 
@@ -356,7 +423,9 @@ fn update(mut state: Game, msg: Msg) -> Game {
                 state.phase = Phase::Lost;
             }
         }
-        Msg::SelectSame => {
+        Msg::Enter(mode) => state.mode = mode,
+        Msg::Choose(selection) => state.selection = selection,
+        Msg::EatSelection => {
             let matches: Vec<usize> = state
                 .food
                 .iter()
@@ -448,6 +517,16 @@ mod tests {
     use super::*;
     use macroquad::rand::srand;
     use proptest::prelude::*;
+
+    #[test]
+    fn spawn_food_never_lands_on_occupied() {
+        srand(1);
+        let occupied = vec![ivec2(0, 0), ivec2(1, 0), ivec2(5, 5)];
+        for _ in 0..100 {
+            let f = spawn_food(&occupied).unwrap();
+            assert!(!occupied.contains(&f.pos));
+        }
+    }
 
     fn any_key() -> impl Strategy<Value = Option<Key>> {
         prop_oneof![
