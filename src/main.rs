@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 
 use macroquad::{
     color::{BLACK, BLUE, Color, DARKPURPLE, GREEN, RED, WHITE, YELLOW},
-    input::{KeyCode, get_last_key_pressed},
+    input::{KeyCode, get_char_pressed, is_key_pressed},
     main,
     math::{IVec2, Vec2, ivec2, vec2},
     rand::{gen_range, srand},
@@ -180,6 +180,22 @@ fn wrapped_delta(from: IVec2, to: IVec2) -> IVec2 {
     (to - from + half).rem_euclid(GRID_SIZE) - half
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+enum Key {
+    Char(char),
+    Esc,
+}
+
+fn poll() -> (Option<Key>, f32) {
+    let key = if is_key_pressed(KeyCode::Escape) {
+        Some(Key::Esc)
+    } else {
+        get_char_pressed().map(Key::Char)
+    };
+
+    (key, get_frame_time())
+}
+
 fn view(state: &Game) {
     let screen = vec2(screen_width(), screen_height());
     let cell_size = (screen / GRID_SIZE.as_vec2()).min_element();
@@ -255,15 +271,13 @@ struct Replay {
     msgs: Vec<Msg>,
 }
 
-fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
-    let key = get_last_key_pressed();
-
-    if key == Some(KeyCode::Q) {
+fn input(state: &Game, msgs: &mut Vec<Msg>, timer: &mut f32, key: Option<Key>, dt: f32) {
+    if key == Some(Key::Char('q')) {
         msgs.push(Msg::Quit);
         return;
     }
 
-    match phase {
+    match state.phase {
         Phase::Start => {
             *timer = 0.0;
             if key.is_some() {
@@ -272,16 +286,16 @@ fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
         }
         Phase::Playing => {
             match key {
-                Some(KeyCode::L) => msgs.push(Msg::Turn(ivec2(1, 0))),
-                Some(KeyCode::H) => msgs.push(Msg::Turn(ivec2(-1, 0))),
-                Some(KeyCode::J) => msgs.push(Msg::Turn(ivec2(0, 1))),
-                Some(KeyCode::K) => msgs.push(Msg::Turn(ivec2(0, -1))),
-                Some(KeyCode::S) => msgs.push(Msg::SelectSame),
-                Some(KeyCode::B) => msgs.push(Msg::Reverse),
+                Some(Key::Char('l')) => msgs.push(Msg::Turn(ivec2(1, 0))),
+                Some(Key::Char('h')) => msgs.push(Msg::Turn(ivec2(-1, 0))),
+                Some(Key::Char('j')) => msgs.push(Msg::Turn(ivec2(0, 1))),
+                Some(Key::Char('k')) => msgs.push(Msg::Turn(ivec2(0, -1))),
+                Some(Key::Char('s')) => msgs.push(Msg::SelectSame),
+                Some(Key::Char('b')) => msgs.push(Msg::Reverse),
                 _ => {}
             }
 
-            *timer += get_frame_time();
+            *timer += dt;
             if *timer >= STEP_TIME {
                 *timer -= STEP_TIME;
                 msgs.push(Msg::Tick);
@@ -289,7 +303,7 @@ fn input(msgs: &mut Vec<Msg>, timer: &mut f32, phase: &Phase) {
         }
         Phase::Lost | Phase::Won => {
             *timer = 0.0;
-            if key == Some(KeyCode::R) {
+            if key == Some(Key::Char('r')) {
                 msgs.push(Msg::Restart);
             }
         }
@@ -396,8 +410,9 @@ async fn main() {
     let mut state = Game::new();
 
     loop {
+        let (key, dt) = poll();
         msgs.clear();
-        input(&mut msgs, &mut timer, &state.phase);
+        input(&state, &mut msgs, &mut timer, key, dt);
 
         for msg in msgs.drain(..) {
             #[cfg(debug_assertions)]
