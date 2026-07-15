@@ -18,6 +18,10 @@ const GRID_SIZE: IVec2 = ivec2(30, 30);
 const STEP_TIME: f32 = 0.1;
 const FOOD_COUNT: usize = 5;
 
+const BASE_SCORE: usize = 10;
+const COMBO_DRAIN_START: usize = 20;
+const COMBO_DRAIN_TICKS: usize = 5;
+
 #[derive(Clone, Copy, PartialEq, EnumIter, EnumCount)]
 enum FoodColor {
     Red,
@@ -63,6 +67,9 @@ struct Game {
     phase: Phase,
     mode: Mode,
     selection: Selection,
+    score: usize,
+    multiplier: usize,
+    combo_ticks: usize,
 }
 
 impl Game {
@@ -91,12 +98,16 @@ impl Game {
             phase: Phase::Start,
             mode: Mode::Nor,
             selection: Selection::None,
+            score: 0,
+            multiplier: 1,
+            combo_ticks: 0,
         }
     }
 }
 
 #[cfg(debug_assertions)]
 fn check_invariants(g: &Game) {
+    assert!(g.multiplier >= 1, "multiplier below 1");
     // dir is a unit step
     assert_eq!(
         g.snake.dir.abs().element_sum(),
@@ -199,6 +210,12 @@ fn wrapped_delta(from: IVec2, to: IVec2) -> IVec2 {
     (to - from + half).rem_euclid(GRID_SIZE) - half
 }
 
+fn score(state: &mut Game, food_count: usize) {
+    state.score += BASE_SCORE * food_count * state.multiplier;
+    state.multiplier += food_count;
+    state.combo_ticks = COMBO_DRAIN_START;
+}
+
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 enum Key {
     Char(char),
@@ -269,7 +286,10 @@ fn view(state: &Game) {
         Mode::Ins => "INS",
     };
     draw_text(
-        mode_text,
+        format!(
+            "{mode_text}  SCORE: {}  MULTIPLIER: {}x",
+            state.score, state.multiplier
+        ),
         offset.x + cell_size,
         offset.y + board.y - cell_size,
         cell_size,
@@ -390,6 +410,12 @@ fn update(mut state: Game, msg: Msg) -> Game {
             }
         }
         Msg::Tick => {
+            state.combo_ticks = state.combo_ticks.saturating_sub(1);
+            if state.combo_ticks == 0 && state.multiplier > 1 {
+                state.multiplier -= 1;
+                state.combo_ticks = COMBO_DRAIN_TICKS;
+            }
+
             state.snake.dir = state.next_dir;
             let new_head =
                 (*state.snake.body.front().unwrap() + state.snake.dir).rem_euclid(GRID_SIZE);
@@ -400,6 +426,7 @@ fn update(mut state: Game, msg: Msg) -> Game {
             {
                 state.snake.color = Some(state.food[i].color);
                 state.snake.grow += 1;
+                score(&mut state, 1);
 
                 let mut occupied: Vec<IVec2> = state.snake.body.iter().copied().collect();
                 for (j, f) in state.food.iter().enumerate() {
@@ -438,6 +465,7 @@ fn update(mut state: Game, msg: Msg) -> Game {
                 state.phase = Phase::Lost;
             } else {
                 state.snake.grow += matches.len();
+                score(&mut state, matches.len());
 
                 let mut occupied: Vec<IVec2> = state.snake.body.iter().copied().collect();
                 for (j, f) in state.food.iter().enumerate() {
