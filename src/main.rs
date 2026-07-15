@@ -576,6 +576,7 @@ mod tests {
             1 => Just(Some(Key::Char('j'))),
             1 => Just(Some(Key::Char('k'))),
             1 => Just(Some(Key::Char('l'))),
+            1 => Just(Some(Key::Char('%'))),
             1 => Just(Some(Key::Char('s'))),
             1 => Just(Some(Key::Char('b'))),
             1 => Just(Some(Key::Char('i'))),
