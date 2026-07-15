@@ -87,9 +87,12 @@ impl Game {
         };
         let mut occupied: Vec<IVec2> = snake.body.iter().copied().collect();
         let food: [Food; FOOD_COUNT] = std::array::from_fn(|_| {
-            let f = spawn_food(&occupied).expect("a fresh grid is never full");
-            occupied.push(f.pos);
-            f
+            let pos = free_cell(&occupied).expect("a fresh grid is never full");
+            occupied.push(pos);
+            Food {
+                pos,
+                color: FoodColor::random(),
+            }
         });
 
         Self {
@@ -196,18 +199,12 @@ fn cell_to_pixel(cell: IVec2, cell_size: f32, offset: Vec2) -> Vec2 {
     offset + cell.as_vec2() * cell_size
 }
 
-fn spawn_food(occupied: &[IVec2]) -> Option<Food> {
+fn free_cell(occupied: &[IVec2]) -> Option<IVec2> {
     let free: Vec<IVec2> = (0..GRID_SIZE.x)
         .flat_map(|x| (0..GRID_SIZE.y).map(move |y| ivec2(x, y)))
-        .filter(|cell| !occupied.contains(cell))
+        .filter(|c| !occupied.contains(c))
         .collect();
-    if free.is_empty() {
-        None
-    } else {
-        let pos = free[gen_range(0, free.len())];
-        let color = FoodColor::random();
-        Some(Food { pos, color })
-    }
+    (!free.is_empty()).then(|| free[gen_range(0, free.len())])
 }
 
 fn wrapped_delta(from: IVec2, to: IVec2) -> IVec2 {
@@ -442,8 +439,13 @@ fn update(mut state: Game, msg: Msg) -> Game {
                         occupied.push(f.pos);
                     }
                 }
-                match spawn_food(&occupied) {
-                    Some(f) => state.food[i] = f,
+                match free_cell(&occupied) {
+                    Some(pos) => {
+                        state.food[i] = Food {
+                            pos,
+                            color: FoodColor::random(),
+                        }
+                    }
                     None => state.phase = Phase::Won,
                 }
             }
@@ -482,10 +484,13 @@ fn update(mut state: Game, msg: Msg) -> Game {
                     }
                 }
                 for i in matches {
-                    match spawn_food(&occupied) {
-                        Some(f) => {
-                            occupied.push(f.pos);
-                            state.food[i] = f;
+                    match free_cell(&occupied) {
+                        Some(pos) => {
+                            occupied.push(pos);
+                            state.food[i] = Food {
+                                pos,
+                                color: FoodColor::random(),
+                            };
                         }
                         None => state.phase = Phase::Won,
                     }
@@ -555,12 +560,12 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
-    fn spawn_food_never_lands_on_occupied() {
+    fn free_cell_never_lands_on_occupied() {
         srand(1);
         let occupied = vec![ivec2(0, 0), ivec2(1, 0), ivec2(5, 5)];
         for _ in 0..100 {
-            let f = spawn_food(&occupied).unwrap();
-            assert!(!occupied.contains(&f.pos));
+            let pos = free_cell(&occupied).unwrap();
+            assert!(!occupied.contains(&pos));
         }
     }
 
