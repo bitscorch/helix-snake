@@ -21,6 +21,7 @@ const FOOD_COUNT: usize = 5;
 const BASE_SCORE: usize = 10;
 const COMBO_DRAIN_START: usize = 20;
 const COMBO_DRAIN_TICKS: usize = 5;
+const MAX_TURNS: usize = 2;
 
 #[derive(Clone, Copy, PartialEq, EnumIter, EnumCount)]
 enum FoodColor {
@@ -63,7 +64,7 @@ enum Selection {
 struct Game {
     snake: Snake,
     food: [Food; FOOD_COUNT],
-    next_dir: IVec2,
+    turns: VecDeque<IVec2>,
     phase: Phase,
     mode: Mode,
     selection: Selection,
@@ -94,7 +95,7 @@ impl Game {
         Self {
             snake,
             food,
-            next_dir: ivec2(1, 0),
+            turns: VecDeque::with_capacity(MAX_TURNS),
             phase: Phase::Start,
             mode: Mode::Nor,
             selection: Selection::None,
@@ -115,8 +116,12 @@ fn check_invariants(g: &Game) {
         "dir not a unit step: {:?}",
         g.snake.dir
     );
-    assert_eq!(g.next_dir.abs().element_sum(), 1);
-    assert_ne!(g.next_dir, -g.snake.dir, "buffered a U-turn");
+    let mut prev = g.snake.dir;
+    for &t in &g.turns {
+        assert_eq!(t.abs().element_sum(), 1, "queued turn not a unit step");
+        assert_ne!(t, -prev, "queued reversal");
+        prev = t;
+    }
 
     // every cell on the board
     for c in &g.snake.body {
@@ -405,8 +410,9 @@ fn update(mut state: Game, msg: Msg) -> Game {
     match msg {
         Msg::Start => state.phase = Phase::Playing,
         Msg::Turn(dir) => {
-            if dir != -state.snake.dir {
-                state.next_dir = dir
+            let last = state.turns.back().copied().unwrap_or(state.snake.dir);
+            if dir != -last && state.turns.len() < MAX_TURNS {
+                state.turns.push_back(dir);
             }
         }
         Msg::Tick => {
@@ -416,7 +422,9 @@ fn update(mut state: Game, msg: Msg) -> Game {
                 state.combo_ticks = COMBO_DRAIN_TICKS;
             }
 
-            state.snake.dir = state.next_dir;
+            if let Some(dir) = state.turns.pop_front() {
+                state.snake.dir = dir;
+            }
             let new_head =
                 (*state.snake.body.front().unwrap() + state.snake.dir).rem_euclid(GRID_SIZE);
             state.snake.body.push_front(new_head);
@@ -494,7 +502,7 @@ fn update(mut state: Game, msg: Msg) -> Game {
             let dir = wrapped_delta(neck, head);
 
             state.snake.dir = dir;
-            state.next_dir = dir;
+            state.turns.clear();
         }
         Msg::Restart => state = Game::new(),
         Msg::Quit => state.phase = Phase::Quit,
